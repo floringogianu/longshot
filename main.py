@@ -131,7 +131,7 @@ def main():
     num_labels = 46
     batch_size = 32
 
-    dset = SyncedMNIST(root="./datasets/SyncedMNIST")
+    dset = SyncedMNIST(root="./data/SyncedMNIST")
     loader = DataLoader(dset, batch_size=batch_size)
 
     model = Glimpsy(

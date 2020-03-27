@@ -42,7 +42,7 @@ class SyncedMNIST(Dataset):
 
 
 if __name__ == "__main__":
-    dset = SyncedMNIST(root="./datasets/SyncedMNIST")
+    dset = SyncedMNIST(root="./data/SyncedMNIST")
     # print("Len: ", len(dset))
     # for i in range(600_001):
     #     data, label = dset[i]
