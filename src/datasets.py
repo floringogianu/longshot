@@ -19,14 +19,12 @@ class SyncedMNIST(Dataset):
         idx %= 1000
 
         if not self.__part_idxs:
-            print("bang: ", self.__sample_cnt == 1000, idx)
-            self.__parts_idxs = torch.randperm(len(self.__parts)).tolist()
+            self.__part_idxs = torch.randperm(len(self.__parts)).tolist()
 
         if self.__sample_cnt == 1000:
             fp = open(self.__parts[self.__part_idxs.pop()], "rb")
             self.__data = pickle.load(fp)
             self.__sample_cnt = 0
-            print(len(self.__part_idxs), idx)
 
         self.__sample_cnt += 1
 
