@@ -6,6 +6,8 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class SyncedMNIST(Dataset):
+    num_labels = 46
+
     def __init__(self, root, split="train"):
         self.__root = root = Path(root)
         self.__split = split
