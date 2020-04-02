@@ -145,9 +145,9 @@ class Glimpsy(nn.Module):
         x = x.view(N, T, k, d_in)  # unfold batch and time
         x = x.permute(1, 0, 2, 3)  # time first
         x = x.view(T, N, -1)  # collapse the local features
-        _, (h_t, _) = self.rnn(x)
-        h_t = self.bn0(h_t.squeeze())
-        return F.log_softmax(self.linear(h_t), dim=1)
+        out, (_, _) = self.rnn(x)
+        out = self.bn0(out.mean(0).squeeze())  # mean over time
+        return F.log_softmax(self.linear(out), dim=1)
 
     def get_genotype(self):
         """ Returns the params to be optimized by ES """
@@ -303,7 +303,7 @@ def get_model(opt, num_labels):
         )
     else:
         model = Glimpsy(
-            partial(unfold, kernel=opt.window, stride=4),
+            partial(unfold, window=opt.window, stride=4),
             SparseAttention(opt.window ** 2, topk=opt.topk),
             nn.LSTM(opt.window ** 2 * opt.topk, hidden_size=opt.hidden_size),
             nn.Linear(opt.hidden_size, SyncedMNIST.num_labels),
