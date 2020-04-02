@@ -89,7 +89,7 @@ class MNIST(object):
         return render
 
 
-MNIST_PATH = "./MNIST"
+MNIST_PATH = "./data/MNIST"
 FILES = [
     "train-images-idx3-ubyte.gz",
     "train-labels-idx1-ubyte.gz",

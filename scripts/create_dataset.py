@@ -459,7 +459,12 @@ def make_video_sincron(data):
                         f"{sync_digits[1]}_all_digits:{digits_in_video}.png"
                     )
                     pylab.savefig(dataset_path + savepath)
-                frame_ = np.array(Image.fromarray(frame).resize((64, 64)))
+                frame_ = np.array(
+                    Image.fromarray(frame).resize(
+                        (64, 64), resample=Image.BILINEAR
+                    )
+                ).astype(np.uint8)
+                # frame_ = np.array(Image.fromarray(frame).resize((64, 64)))
                 video[frame_no] = frame_
 
             videos[batch_ind] = video
