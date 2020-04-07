@@ -181,48 +181,66 @@ class Baseline(nn.Module):
         return F.log_softmax(self.linear(out), dim=1)
 
 
-def train_with_cma(opt, loader, model, optim, es_optim, log):
+def train_with_cma(opt, loaders, model, optim, es_optim, log):
     """ CMA-ES training routine. """
-    gen_cnt, step_cnt = 0, 0
+    loader, es_loader = loaders
+    es_loader_itt = iter(es_loader)
+
+    step = 0
     for epoch in range(opt.epochs):
         log.info(f"Epoch {epoch:03d} started ----------------------")
 
-        candidates, losses = es_optim.ask(), []
         correct = 0
         for idx, (data, target) in enumerate(loader):
             data, target = data.to(opt.device), target.to(opt.device)
 
-            if (idx % opt.popsize == 0) and (idx != 0):
-                es_optim.tell(candidates, losses)
-
-                stats = {
-                    "acc": 100.0 * correct / (idx * opt.batch_size),
-                    "bestFit": np.min(losses),
-                    "unFit": np.max(losses),
-                    "attnMean": model.get_genotype().mean().item(),
-                    "attnVar": model.get_genotype().var().item(),
-                    "gen": gen_cnt,
-                }
-
-                log.info(log.fmt.format(batch=idx, **stats))
-                log.trace(step=step_cnt, **stats)
-
-                candidates, losses = es_optim.ask(), []
-                gen_cnt += 1
-
-            model.set_genotype(candidates[idx % opt.popsize])
+            # Gradient optimization
             ys = model(data)
             loss = F.nll_loss(ys, target.squeeze())
 
             optim.zero_grad()
             loss.backward()
             optim.step()
-            losses.append(loss.cpu().item())  # append for the CMA-ES eval
 
-            # stats
+            # compute accuracy
             pred = ys.argmax(dim=1, keepdim=True)
             correct += pred.eq(target.view_as(pred)).sum().item()
-            step_cnt += 1
+
+            # CMA-ES optimization
+            candidates, losses = es_optim.ask(), []
+            # get a single batch
+            try:
+                data, target_ = next(es_loader_itt)
+            except StopIteration:
+                es_loader_itt = iter(es_loader)
+                data, target_ = next(es_loader_itt)
+            data, target_ = data.to(opt.device), target_.to(opt.device)
+
+            for candidate in candidates:
+                model.set_genotype(candidate)
+                with torch.no_grad():
+                    loss = F.nll_loss(model(data), target_.squeeze())
+                    losses.append(loss.cpu().item())
+            es_optim.tell(candidates, losses)
+            # set the best attention
+            model.set_genotype(candidates[np.argmin(losses)])
+
+            # report stats
+            if (idx % 64 == 0) and (idx != 0):
+                stats = {
+                    "acc": 100.0 * correct / (idx * opt.batch_size),
+                    "bestFit": np.min(losses),
+                    "unFit": np.max(losses),
+                    "attnMean": model.get_genotype().mean().item(),
+                    "attnVar": model.get_genotype().var().item(),
+                    "gen": idx,
+                }
+
+                log.info(log.fmt.format(batch=idx, **stats))
+                if idx % 512 == 0:
+                    log.trace(step=step, **stats)
+
+            step += 1
 
         # save some models
         torch.save(
@@ -258,7 +276,7 @@ def train(opt, loader, model, optim, log):
                 correct += pred.eq(target.view_as(pred)).sum().item()
                 losses.append(loss.cpu().item())
 
-                if (idx % opt.popsize == 0) and (idx != 0):
+                if (idx % 512 == 0) and (idx != 0):
                     stats = {
                         "acc": 100.0 * correct / (idx * opt.batch_size),
                         "loss": torch.tensor(losses).mean().item(),
@@ -369,7 +387,14 @@ def main(opt):
     optim = O.Adam(model.parameters(), lr=0.001)
 
     if opt.model != "baseline":
-        train_with_cma(opt, loader, model, optim, es_optim, train_log)
+        train_with_cma(
+            opt,
+            (loader, DataLoader(dset, batch_size=256)),
+            model,
+            optim,
+            es_optim,
+            train_log,
+        )
     else:
         train(opt, loader, model, optim, train_log)
 
@@ -383,7 +408,7 @@ if __name__ == "__main__":
     PARSER.add_argument("-e", "--epochs", type=int, default=200, help=":")
     PARSER.add_argument("-w", "--window", type=int, default=7, help=":")
     PARSER.add_argument("-k", "--topk", type=int, default=12, help=":")
-    PARSER.add_argument("--hidden-size", type=int, default=256, help=":")
+    PARSER.add_argument("--hidden-size", type=int, default=64, help=":")
     PARSER.add_argument("-b", "--batch-size", type=int, default=128, help=":")
-    PARSER.add_argument("-p", "--popsize", type=int, default=128, help=":")
+    PARSER.add_argument("-p", "--popsize", type=int, default=32, help=":")
     main(PARSER.parse_args())
