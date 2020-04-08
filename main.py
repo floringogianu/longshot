@@ -18,6 +18,7 @@ from pytorch_model_summary import summary
 from torch.utils.data import DataLoader
 
 from src.datasets import SyncedMNIST
+from src.utils import idx2xy
 
 
 class SparseAttention(nn.Module):
@@ -115,22 +116,29 @@ class Head(nn.Module):
 class Glimpsy(nn.Module):
     """ Super duper model. """
 
-    def __init__(self, unfold, attention, rnn, linear, head=None):
+    def __init__(self, unfold, attention, rnn, linear, head=None, idx2xy=None):
         super(Glimpsy, self).__init__()
         self.head = head
         self.unfold = unfold
         self.attention = attention
         self.rnn = rnn
+        self.idx2xy = idx2xy
         self.bn0 = nn.BatchNorm1d(self.rnn.hidden_size)
         self.linear = linear
+        self.x = None
 
-    def forward(self, x):  # pylint: disable=arguments-differ
+    def forward(self, x, cacheit=True):  # pylint: disable=arguments-differ
         if self.head is not None:
             # feature extractor
             x = self.head(x)
 
-        # get patches
-        x = self.unfold(x)
+        N, T, C, W, H = x.shape
+
+        # get patches and cache the result because unfold is expensive
+        if cacheit:
+            self.x = x = self.unfold(x)
+        else:
+            x = self.x
 
         # attention, no gradient required here
         idxs = self.attention(x.data)
@@ -140,6 +148,12 @@ class Glimpsy(nn.Module):
         _, _, k, _ = idxs.shape
         x = x.view(N * T, n, d_in)  # collapse batch and time
         x = x.gather(1, idxs.view(N * T, k, 1).expand(N * T, k, d_in))
+
+        # normalize indices so that we can use them as features
+        if self.idx2xy is not None:
+            xys = self.idx2xy(idxs.view(N * T, k), d=W)
+            x = torch.cat([x, xys], dim=-1)
+            d_in += 2
 
         # ready for rnn
         x = x.view(N, T, k, d_in)  # unfold batch and time
@@ -216,10 +230,11 @@ def train_with_cma(opt, loaders, model, optim, es_optim, log):
                 data, target_ = next(es_loader_itt)
             data, target_ = data.to(opt.device), target_.to(opt.device)
 
-            for candidate in candidates:
+            for cid, candidate in enumerate(candidates):
                 model.set_genotype(candidate)
                 with torch.no_grad():
-                    loss = F.nll_loss(model(data), target_.squeeze())
+                    ys = model(data) if cid == 0 else model(data, cacheit=False)
+                    loss = F.nll_loss(ys, target_.squeeze())
                     losses.append(loss.cpu().item())
             es_optim.tell(candidates, losses)
             # set the best attention
@@ -320,12 +335,19 @@ def get_model(opt, num_labels):
             nn.Linear(opt.hidden_size, num_labels),
         )
     else:
+        lstm_in = opt.window ** 2 * opt.topk
+        idx2xy_partial = None
+        if opt.use_coords:
+            # increase the input for the xy coords
+            lstm_in = (opt.window ** 2 + 2) * opt.topk
+            idx2xy_partial = partial(idx2xy, k=opt.window, s=4)
         model = Glimpsy(
             partial(unfold, window=opt.window, stride=4),
             SparseAttention(opt.window ** 2, topk=opt.topk),
-            nn.LSTM(opt.window ** 2 * opt.topk, hidden_size=opt.hidden_size),
+            nn.LSTM(lstm_in, hidden_size=opt.hidden_size),
             nn.Linear(opt.hidden_size, SyncedMNIST.num_labels),
             head=Head(),
+            idx2xy=idx2xy_partial,
         )
 
     rlog.info(
@@ -411,4 +433,5 @@ if __name__ == "__main__":
     PARSER.add_argument("--hidden-size", type=int, default=64, help=":")
     PARSER.add_argument("-b", "--batch-size", type=int, default=128, help=":")
     PARSER.add_argument("-p", "--popsize", type=int, default=32, help=":")
+    PARSER.add_argument("--use-coords", action="store_false", help=":")
     main(PARSER.parse_args())
